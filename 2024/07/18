@@ -1,0 +1,120 @@
+import googlemaps
+import pandas as pd
+import time
+import re
+import os
+
+
+# APIキーを設定
+API_KEY = 'ｘｘｘ'  # ここに自分のAPIキーを入れてね！
+gmaps = googlemaps.Client(key=API_KEY)
+
+
+def get_place_details(place_id):
+    """指定されたplace_idの詳細情報を取得する関数"""
+    fields = ['name', 'formatted_address', 'formatted_phone_number', 'rating', 'user_ratings_total', 'opening_hours', 'website', 'url']
+    place_details = gmaps.place(place_id=place_id, fields=fields, language='ja')
+    return place_details.get('result')
+
+
+def clean_address(address):
+    """住所から「日本」および郵便番号を削除する関数"""
+    address = re.sub(r'日本、', '', address)
+    address = re.sub(r'〒\d{3}-\d{4}', '', address)
+    return address.strip()
+
+
+def extract_last_word(query):
+    """クエリの最後の単語を抽出する関数"""
+    return query.split()[-1] if query else ''
+
+
+def search_places(query):
+    """指定されたクエリで店舗を検索し、各店舗の詳細情報を取得する関数"""
+    places_details = []
+    next_page_token = None
+    last_word = extract_last_word(query)
+
+
+    while True:
+        if next_page_token:
+            places_result = gmaps.places(query=query, page_token=next_page_token)
+        else:
+            places_result = gmaps.places(query=query)
+
+
+        for place in places_result.get('results', []):
+            place_id = place['place_id']
+            details = get_place_details(place_id)
+            if details.get('formatted_phone_number'):  # 電話番号がある場合のみ追加
+                user_ratings_total = details.get('user_ratings_total', 0)
+               
+                # ここで口コミ数の条件を変更
+                if 10 <= user_ratings_total <= 49:  # 口コミ数が10以上49以下
+                    opening_hours = details.get('opening_hours', {}).get('weekday_text', '営業時間情報なし')
+                    clean_formatted_address = clean_address(details.get('formatted_address', ''))
+                    places_details.append({
+                        '店舗名': details.get('name'),
+                        '住所': clean_formatted_address,
+                        '電話番号': details.get('formatted_phone_number'),
+                        '業種': last_word,
+                        '評価': details.get('rating'),
+                        '口コミ数': user_ratings_total,
+                        '営業時間': '\n'.join(opening_hours) if isinstance(opening_hours, list) else opening_hours,
+                        '検索条件': query,
+                        '関連サイト': details.get('website') or details.get('url')
+                    })
+
+
+        next_page_token = places_result.get('next_page_token')
+        if not next_page_token:
+            break
+
+
+        # 次のページのトークンが有効になるまで少し待つ
+        time.sleep(2)
+
+
+    return places_details
+
+
+def main():
+    # クエリをquery.csvから読み込む
+    input_file_path = r'C:\Users\USER\Desktop\query.csv'
+    output_directory = r'C:\Users\USER\Documents'  # 保存先を変更
+    output_file_path = os.path.join(output_directory, 'yanosangmap_result.csv')
+
+
+    # ディレクトリが存在しない場合は作成
+    if not os.path.exists(output_directory):
+        os.makedirs(output_directory)
+
+
+    # CSVファイルからクエリを読み込む
+    queries = pd.read_csv(input_file_path, header=None, names=['クエリ']).iloc[1:, 0].tolist()  # 1レコード目をスキップして2行目から開始
+
+
+    all_places = []
+
+
+    # 各クエリに対して検索を実行
+    for query in queries:
+        print(f"検索中だにゃ: {query}")
+        places = search_places(query)
+        all_places.extend(places)
+    # 結果をデータフレームに変換し、カラムの順序を指定
+    df = pd.DataFrame(all_places, columns=['店舗名', '住所', '電話番号', '業種', '評価', '口コミ数', '営業時間', '検索条件', '関連サイト'])
+    print(df)
+
+
+    # CSVファイルに出力
+    df.to_csv(output_file_path, index=False, encoding='utf-8-sig')
+
+
+    print(f"CSVファイル '{output_file_path}' に抽出結果が出力されたにゃー(=^・^=)。")
+
+
+if __name__ == "__main__":
+    main()
+   
+    #高橋さん＆矢野さんへ：１０以上４９以下の口コミ数に変更しました！※テスト未完了（API問題のため）
